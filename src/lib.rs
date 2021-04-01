@@ -1,18 +1,18 @@
 use wasm_bindgen::prelude::*;
 
-static HIRAGANA: &'static str = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをん";
-static KATAKANA: &'static str = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲン";
+static HIRAGANA: &'static str = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼ";
+static KATAKANA: &'static str = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビブベボ";
 
 #[wasm_bindgen]
 pub fn decode(text: &str, charset: &str) -> String {
     let charset = match CharSet::parse(charset) {
         Some(c) => c,
-        _ => return "Error: bad charset".to_owned()
+        _ => return "Error: bad charset".to_owned(),
     };
 
     match _decode(text, charset) {
         Ok(res) => std::str::from_utf8(&res[..]).unwrap().to_string(),
-        Err(e) => e.to_owned()
+        Err(e) => e.to_owned(),
     }
 }
 
@@ -20,7 +20,7 @@ pub fn decode(text: &str, charset: &str) -> String {
 pub fn encode(text: &str, charset: &str) -> String {
     let charset = match CharSet::parse(charset) {
         Some(c) => c,
-        _ => return "Error: bad charset".to_owned()
+        _ => return "Error: bad charset".to_owned(),
     };
 
     _encode(text.as_bytes(), charset)
@@ -37,8 +37,12 @@ enum CharSet {
 impl CharSet {
     fn char_table(self) -> Vec<char> {
         match self {
-            Self::Base64   => ('A'..='Z').chain('a'..='z').chain('0'..='9').chain("+/".chars()).collect(),
-            Self::Kanji    => ('㐀'..'㿿').collect(), // seiai.ed.jp/sys/text/java/utf8table.html
+            Self::Base64 => ('A'..='Z')
+                .chain('a'..='z')
+                .chain('0'..='9')
+                .chain("+/".chars())
+                .collect(),
+            Self::Kanji => ('㐀'..'㿿').collect(), // seiai.ed.jp/sys/text/java/utf8table.html
             Self::Hiragana => HIRAGANA.chars().collect(),
             Self::Katakana => KATAKANA.chars().collect(),
         }
@@ -48,7 +52,7 @@ impl CharSet {
         let l = self.char_table().len();
         let mut i = 0;
         // 00011010
-        while 1 << (i+1) <= l {
+        while 1 << (i + 1) <= l {
             i += 1;
         }
         i
@@ -59,14 +63,19 @@ impl CharSet {
             "hanja" | "hanzi" | "kanji" => Some(Self::Kanji),
             "hiragana" => Some(Self::Hiragana),
             "katakana" => Some(Self::Katakana),
-            _ => None
+            "base64" => Some(Self::Base64),
+            _ => None,
         }
     }
 }
 
+/// "Container" type for variable-length uint
+#[allow(non_camel_case_types)]
+type uVar = u16;
+
 /// Iterator that repacks bits from ux to uy. u16 is used to represent input and output values.
 ///
-/// E.g: from u8->u6
+/// E.g: from u8->u6 (or vice versa)
 ///
 ///     11111111 00000000 11111111
 ///
@@ -79,19 +88,19 @@ struct RepackIterator<T: Iterator> {
     discard: bool,
 }
 
-impl<T: Iterator<Item=u16>> RepackIterator<T> {
+impl<T: Iterator<Item = uVar>> RepackIterator<T> {
     fn new(iband: T, isize: u8, osize: u8, discard: bool) -> RepackIterator<T> {
         RepackIterator {
-            iband : iband.peekable(),
-            cbits : 0,
-            isize : isize,
-            osize : osize,
-            discard : discard,
+            iband: iband.peekable(),
+            cbits: 0,
+            isize: isize,
+            osize: osize,
+            discard: discard,
         }
     }
 }
 
-fn take_bits(n: u16, nsize: u8, count: u8, skip: u8) -> u16 {
+fn take_bits(n: uVar, nsize: u8, count: u8, skip: u8) -> uVar {
     // 01234567
     // __XXXXX_ -> ___XXXXX
     // 76543210
@@ -101,15 +110,15 @@ fn take_bits(n: u16, nsize: u8, count: u8, skip: u8) -> u16 {
     (n & mask) >> to
 }
 
-impl<T: Iterator<Item=u16>> Iterator for RepackIterator<T> {
-    type Item = u16;
+impl<T: Iterator<Item = uVar>> Iterator for RepackIterator<T> {
+    type Item = T::Item;
 
-    fn next(&mut self) -> Option<u16> {
+    fn next(&mut self) -> Option<uVar> {
         if let None = self.iband.peek() {
-            return None
+            return None;
         }
 
-        let mut acc: u16 = 0;
+        let mut acc: uVar = 0;
         let mut aln: u8 = 0;
 
         // 01234567 01234567 01234567
@@ -142,20 +151,25 @@ impl<T: Iterator<Item=u16>> Iterator for RepackIterator<T> {
 fn _encode(bytes: &[u8], encoding: CharSet) -> String {
     let chars_table = encoding.char_table();
 
-    let it = bytes.iter().map(|&x| x as u16);
+    let it = bytes.iter().map(|&x| x as uVar);
     let it = RepackIterator::new(it, 8, encoding.bitcount(), false);
 
     it.map(|x| chars_table[x as usize]).collect()
 }
 
-fn _decode(text: &str, encoding: CharSet) -> Result<Vec<u8>, &str> {
+fn _decode(text: &str, encoding: CharSet) -> Result<Vec<u8>, String> {
+    let text = match encoding {
+        CharSet::Base64 => text.trim_end_matches('='),
+        _ => text
+    };
+
     let chars_table = encoding.char_table();
-    if text.chars().any(|c| !chars_table.contains(&c)) {
-        return Err("DecodeError")
+    if let Some((i, c)) = text.chars().enumerate().find(|(_, x)| !chars_table.contains(x)) {
+        return Err(format!("Error decoding: unknown character '{}' at position {}", c, i));
     }
 
-    let it = |c| chars_table.iter().position(|&x| x == c).unwrap() as u16;
-    let it = text.chars().map(it);
+    let rlookup = |c| chars_table.iter().position(|&x| x == c).unwrap();
+    let it = text.chars().map(rlookup).map(|x| x as uVar);
     let it = RepackIterator::new(it, encoding.bitcount(), 8, true);
 
     Ok(it.map(|x| x as u8).collect())
@@ -163,10 +177,10 @@ fn _decode(text: &str, encoding: CharSet) -> Result<Vec<u8>, &str> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{_encode, _decode, CharSet};
+    use crate::{CharSet, _decode, _encode};
 
     #[test]
-    fn test_base_64_empty_inputs() {
+    fn test_base64_empty_inputs() {
         let enc = _encode(&[], CharSet::Base64);
         assert_eq!("", enc);
 
@@ -175,7 +189,7 @@ mod tests {
     }
 
     #[test]
-    fn test_base_64_sample_text() {
+    fn test_base64_sample_text() {
         let ref_dec = "Hello world";
         let ref_enc = "SGVsbG8gd29ybGQ";
 
@@ -188,7 +202,16 @@ mod tests {
     }
 
     #[test]
-    fn test_base_64_bytespace() {
+    fn test_base64_padding() {
+        let ref_dec = "Hello world";
+        let ref_enc = "SGVsbG8gd29ybGQ==";
+        let dec = _decode(ref_enc, CharSet::Base64).unwrap();
+        let dec = std::str::from_utf8(&dec[..]).unwrap();
+        assert_eq!(ref_dec, dec);
+    }
+
+    #[test]
+    fn test_base64_bytespace() {
         let ref_dec = (0..255).chain(255..=0).collect::<Vec<u8>>();
 
         let enc = _encode(&ref_dec, CharSet::Base64);
