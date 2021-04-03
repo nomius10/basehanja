@@ -1,6 +1,6 @@
 /// Internal "container" type for variable-length uint
 #[allow(non_camel_case_types)]
-type uVar = u16;
+pub type uVar = u16;
 
 /// Iterator that repacks bits from ux to uy. u16 is used to represent input and output values.
 ///
@@ -18,9 +18,12 @@ pub struct RepackIterator<T: Iterator> {
 }
 
 impl<T: Iterator<Item = uVar>> RepackIterator<T> {
-    pub fn new(iband: T, isize: u8, osize: u8, discard: bool) -> RepackIterator<T> {
+    pub fn new<F>(iband: F, isize: u8, osize: u8, discard: bool) -> RepackIterator<T>
+    where
+        F: IntoIterator<Item = uVar, IntoIter = T>,
+    {
         RepackIterator {
-            iband: iband.peekable(),
+            iband: iband.into_iter().peekable(),
             cbits: 0,
             isize: isize,
             osize: osize,

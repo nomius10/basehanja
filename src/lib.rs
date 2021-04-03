@@ -4,16 +4,22 @@ use wasm_bindgen::prelude::*;
 extern crate lazy_static;
 
 mod encoding;
-use encoding::Encoding;
+use encoding::{Encoding, get_encodings as _get_enc};
 
 mod repack;
 use repack::RepackIterator;
 
+// no support for arrays in wasm_bindgen ATM. Return coma separated data
+#[wasm_bindgen]
+pub fn get_encodings() -> String {
+    _get_enc()
+}
+
 #[wasm_bindgen]
 pub fn decode(text: &str, charset: &str) -> String {
-    let charset = match Encoding::parse(charset) {
-        Some(c) => c,
-        _ => return "Error: bad charset".to_owned(),
+    let charset = match charset.parse() {
+        Ok(c) => c,
+        Err(_) => return "Error: bad charset".to_owned(),
     };
 
     match _decode(text, charset) {
@@ -26,9 +32,9 @@ pub fn decode(text: &str, charset: &str) -> String {
 
 #[wasm_bindgen]
 pub fn encode(text: &str, charset: &str) -> String {
-    let charset = match Encoding::parse(charset) {
-        Some(c) => c,
-        _ => return "Error: bad charset".to_owned(),
+    let charset = match charset.parse() {
+        Ok(c) => c,
+        Err(_) => return "Error: bad charset".to_owned(),
     };
 
     _encode(text.as_bytes(), charset)
@@ -85,7 +91,7 @@ mod tests {
     #[test]
     fn test_base64_bytespace() {
         let ref_dec = (0..255).chain(255..=0).collect::<Vec<u8>>();
-        let codec = crate::encoding::Encoding::parse("base64").unwrap();
+        let codec = "base64".parse().unwrap();
 
         let enc = _encode(&ref_dec, codec);
         let dec = _decode(&enc, codec).unwrap();
@@ -94,8 +100,14 @@ mod tests {
 
     #[test]
     fn test_utf8_error() {
-        let reff = "㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㨀㨀㨀㨀";
-        let dec = decode(&reff, "kanji");
-        assert!(dec.contains("Invalid UTF-8"));
+        let ref_enc = "㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㫮㭷㞻㧝㨀㨀㨀㨀";
+        assert!(decode(&ref_enc, "kanji").contains("Invalid UTF-8"));
+    }
+
+    #[test]
+    fn test_cyka_message() {
+        let ref_dec = "Nicu suge pula";
+        let ref_enc = "㙳㙘㫪㘇㖺㦝㢤㑰㞫㜘㘀";
+        assert_eq!(decode(&ref_enc, "kanji"), ref_dec);
     }
 }

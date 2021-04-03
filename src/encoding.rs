@@ -1,3 +1,5 @@
+use crate::repack::uVar;
+
 static HIRAGANA: &'static str = "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみむめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶべぼ";
 static KATAKANA: &'static str = "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビブベボ";
 
@@ -20,12 +22,23 @@ lazy_static! {
     .collect();
 }
 
-impl Encoding<'_> {
-    pub fn parse(key: &str) -> Option<&Encoding> {
-        let key = key.trim().to_lowercase().to_owned();
-        ENCODINGS.iter().find(|x| x.id == key)
-    }
+pub fn get_encodings() -> String {
+    ENCODINGS.iter()
+        .map(|x| format!("{},{}", x.id, x.description))
+        .collect::<Vec<String>>()
+        .join(",")
+}
 
+impl std::str::FromStr for &Encoding<'_> {
+    type Err = ();
+
+    fn from_str(key: &str) -> Result<Self, Self::Err> {
+        let key = key.trim().to_lowercase().to_owned();
+        ENCODINGS.iter().find(|x| x.id == key).ok_or(())
+    }
+}
+
+impl Encoding<'_> {
     pub fn bitcount(&self) -> u8 {
         let l = self.char_table.len();
         let mut i = 0;
@@ -36,12 +49,12 @@ impl Encoding<'_> {
         i
     }
 
-    pub fn enc_fn<'a>(&'a self) -> impl Fn(u16) -> char + 'a {
+    pub fn enc_fn<'a>(&'a self) -> impl Fn(uVar) -> char + 'a {
         move |x| self.char_table[x as usize]
     }
 
-    pub fn dec_fn(&self) -> impl Fn(char) -> u16 + '_ {
-        move |c| self.char_table.iter().position(|&x| x == c).unwrap() as u16
+    pub fn dec_fn(&self) -> impl Fn(char) -> uVar + '_ {
+        move |c| self.char_table.iter().position(|&x| x == c).unwrap() as uVar
     }
 
     pub fn validate(&self, s: &str) -> Result<(), (usize, char)> {
