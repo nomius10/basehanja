@@ -9,14 +9,24 @@ use encoding::Encoding;
 mod repack;
 use repack::RepackIterator;
 
-// Alternative would be using serde. Return coma separated data
 #[wasm_bindgen]
-pub fn get_encodings() -> String {
+#[derive(serde::Serialize)]
+pub struct EncodingDescription {
+    name: String,
+    description: String,
+}
+
+#[wasm_bindgen]
+pub fn get_encodings() -> Box<[JsValue]> {
     encoding::get_encodings()
         .iter()
-        .map(|x| format!("{},{}", x.id, x.description))
-        .collect::<Vec<String>>()
-        .join(",")
+        .map(|x| EncodingDescription {
+            name: x.id.to_owned(),
+            description: x.description.to_owned(),
+        })
+        .map(|x| JsValue::from_serde(&x).unwrap())
+        .collect::<Vec<JsValue>>()
+        .into_boxed_slice()
 }
 
 #[wasm_bindgen(catch)]
