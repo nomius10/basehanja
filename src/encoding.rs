@@ -22,19 +22,19 @@ lazy_static! {
     .collect();
 }
 
-pub fn get_encodings() -> String {
-    ENCODINGS.iter()
-        .map(|x| format!("{},{}", x.id, x.description))
-        .collect::<Vec<String>>()
-        .join(",")
+pub fn get_encodings<'a>() -> Vec<&'a Encoding<'static>> {
+    ENCODINGS.iter().collect()
 }
 
 impl std::str::FromStr for &Encoding<'_> {
-    type Err = ();
+    type Err = String;
 
     fn from_str(key: &str) -> Result<Self, Self::Err> {
         let key = key.trim().to_lowercase().to_owned();
-        ENCODINGS.iter().find(|x| x.id == key).ok_or(())
+        ENCODINGS
+            .iter()
+            .find(|x| x.id == key)
+            .ok_or(format!("invalid encoding: {}", key))
     }
 }
 
