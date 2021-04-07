@@ -1,13 +1,8 @@
 use wasm_bindgen::prelude::*;
 
-#[macro_use]
-extern crate lazy_static;
-
+mod repack;
 mod encoding;
 use encoding::Encoding;
-
-mod repack;
-use repack::RepackIterator;
 
 #[wasm_bindgen]
 #[derive(serde::Serialize)]
@@ -21,8 +16,8 @@ pub fn get_encodings() -> Box<[JsValue]> {
     encoding::get_encodings()
         .iter()
         .map(|x| EncodingDescription {
-            name: x.id.to_owned(),
-            description: x.description.to_owned(),
+            name: x.name.to_owned(),
+            description: x.long_name.to_owned(),
         })
         .map(|x| JsValue::from_serde(&x).unwrap())
         .collect::<Vec<JsValue>>()
@@ -52,25 +47,11 @@ pub fn encode(text: &str, charset: &str) -> Result<String, JsValue> {
 // hence these sub-functions
 
 fn _encode(bytes: &[u8], encoding: &Encoding) -> String {
-    let it = bytes.iter().map(|&x| x as u16);
-    let it = RepackIterator::new(it, 8, encoding.bitcount(), false);
-    it.map(encoding.enc_fn()).collect()
+    encoding.encode(bytes)
 }
 
 fn _decode(text: &str, encoding: &Encoding) -> Result<Vec<u8>, String> {
-    let text = text.trim_end_matches(encoding.escape_char);
-
-    if let Err((idx, c)) = encoding.validate(text) {
-        return Err(format!(
-            "Error decoding: unknown character '{}' at position {}",
-            c, idx
-        ));
-    }
-
-    let it = text.chars().map(encoding.dec_fn());
-    let it = RepackIterator::new(it, encoding.bitcount(), 8, true);
-
-    Ok(it.map(|x| x as u8).collect())
+    encoding.decode(text)
 }
 
 #[cfg(test)]
@@ -112,7 +93,7 @@ mod tests {
     #[test]
     fn test_empty_inputs() {
         for c in _get_enc() {
-            let c = c.id;
+            let c = c.name;
             assert_eq!("", dec!("", c), "Failed with encoding {}", c);
             assert_eq!("", enc!("", c), "Failed with encoding {}", c);
         }
@@ -128,7 +109,7 @@ mod tests {
     #[test]
     fn test_reflexivity_blns() {
         for c in _get_enc() {
-            let c = c.id;
+            let c = c.name;
             for l in get_blns() {
                 let e = enc!(l, c);
                 assert_eq!(l, dec!(&e, c), "Failed with encoding `{}`", c);
@@ -142,7 +123,7 @@ mod tests {
         for c in _get_enc() {
             let enc = _encode(&ref_dec, c);
             let dec = _decode(&enc, c).unwrap();
-            assert_eq!(ref_dec, dec, "Failed with encoding `{}`", c.id);
+            assert_eq!(ref_dec, dec, "Failed with encoding `{}`", c.name);
         }
     }
 }

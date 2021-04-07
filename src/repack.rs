@@ -1,6 +1,6 @@
 /// Internal "container" type for variable-length uint
 #[allow(non_camel_case_types)]
-pub type uVar = u16;
+pub type uVar = u32;
 
 /// Iterator that repacks bits from ux to uy. u16 is used to represent input and output values.
 ///
