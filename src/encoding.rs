@@ -164,11 +164,28 @@ impl Encoding {
         Ok(acc)
     }
 
+    fn gcd(a: usize, b: usize) -> usize {
+        let mut x = std::cmp::max(a, b);
+        let mut y = std::cmp::min(a, b);
+        loop {
+            let r = x % y;
+            if r == 0 {
+                return y;
+            }
+            x = y;
+            y = r;
+        }
+    }
+
     // for bitcounts larger than 8, the padding will determine the num of chars to drop
     fn get_pad_len(&self, l: usize) -> usize {
         let bc = self.bitcount() as usize;
         if bc <= 8 {
-            return 0;
+            if l == 0 {
+                return 0;
+            }
+            let gcd = Self::gcd(bc, 8);
+            return gcd - (l % gcd);
         }
         let mut i = l * 8;
         while i % bc != 0 {
@@ -182,7 +199,7 @@ impl Encoding {
         let mut acc = vec![];
         let mut prev_i = 0;
         let mut met = false;
-        for (i, c) in text.chars().enumerate() {
+        for (i, c) in text.char_indices() {
             if met == false && c == self.padding_char {
                 met = true;
             }

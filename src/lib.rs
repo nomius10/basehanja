@@ -126,4 +126,18 @@ mod tests {
             assert_eq!(ref_dec, dec, "Failed with encoding `{}`", c.name);
         }
     }
+
+    #[test]
+    fn test_reflexivity_concatenated() {
+        for i in 0..30 {
+            let ref_dec = "a".repeat(i);
+            for c in _get_enc() {
+                let c = c.name;
+                let enc = enc!(ref_dec, c);
+                let enc = enc.repeat(3);
+                let dec = dec!(&enc, c);
+                assert_eq!(ref_dec.repeat(3), dec, "Failed with encoding `{}`", c);
+            }
+        }
+    }
 }
