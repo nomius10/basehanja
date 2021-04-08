@@ -7,6 +7,11 @@ pub struct Encoding {
     char_space: CharSpace,
 }
 
+enum CharSpace {
+    Concrete(&'static str),
+    Intervals(&'static [(char, char)]),
+}
+
 static ENCODINGS: &[Encoding] = &[
     Encoding {
         name: "base64",
@@ -51,11 +56,6 @@ static ENCODINGS: &[Encoding] = &[
     },
 ];
 
-enum CharSpace {
-    Concrete(&'static str),
-    Intervals(&'static [(char, char)]),
-}
-
 macro_rules! cp_len {
     ($a:expr, $b:expr) => {
         ($b as usize) - ($a as usize) + 1
@@ -64,21 +64,9 @@ macro_rules! cp_len {
 
 use CharSpace::*;
 impl CharSpace {
-    // this is taxing
-    /*
-    fn char_table(self) -> Vec<char> {
-        match self {
-            Concrete(s) => s.chars().collect(),
-            Intervals(arr) => arr.iter().fold(vec![], |mut acc, (a, b)| {
-                acc.extend_from_slice((*a..=*b).collect::<Vec<char>>().as_slice());
-                acc
-            }),
-        }
-    }*/
-
     fn idx_to_char(&self, u: uVar) -> char {
         match self {
-            Concrete(s) => s.chars().nth(u as usize).expect(&format!("is {} {}", u, self.size())),
+            Concrete(s) => s.chars().nth(u as usize).unwrap(),
             Intervals(arr) => {
                 let mut u = u as usize;
                 for (a, b) in *arr {
@@ -121,6 +109,18 @@ impl CharSpace {
             Intervals(arr) => arr.iter().map(|(a, b)| cp_len!(*a, *b)).sum(),
         }
     }
+
+    pub fn bitcount(&self) -> u8 {
+        let l = self.size();
+        let mut i = 0;
+        // 00011010
+        loop {
+            if 1 << i + 1 > l {
+                break i;
+            }
+            i += 1;
+        }
+    }
 }
 
 pub fn get_encodings<'a>() -> &'static [Encoding] {
@@ -141,43 +141,85 @@ impl std::str::FromStr for &Encoding {
 
 impl Encoding {
     pub fn bitcount(&self) -> u8 {
-        let l = self.char_space.size();
-        let mut i = 0;
-        // 00011010
-        while 1 << (i + 1) <= l {
-            i += 1;
-        }
-        i
+        self.char_space.bitcount()
     }
 
     pub fn encode(&self, bytes: &[u8]) -> String {
         let it = bytes.iter().map(|&x| x as uVar);
         let it = RepackIterator::new(it, 8, self.bitcount(), false);
-        it.map(|x| self.char_space.idx_to_char(x)).collect()
+        let mut s = it
+            .map(|x| self.char_space.idx_to_char(x))
+            .collect::<String>();
+        // Append padding chars
+        let pad_len = self.get_pad_len(bytes.len());
+        s += &self.padding_char.to_string().repeat(pad_len);
+        s
     }
 
     pub fn decode(&self, text: &str) -> Result<Vec<u8>, String> {
+        let mut acc = vec![];
+        for txt in self.deconcat(text) {
+            acc.append(&mut self._decode(txt)?);
+        }
+        Ok(acc)
+    }
+
+    // for bitcounts larger than 8, the padding will determine the num of chars to drop
+    fn get_pad_len(&self, l: usize) -> usize {
+        let bc = self.bitcount() as usize;
+        if bc <= 8 {
+            return 0;
+        }
+        let mut i = l * 8;
+        while i % bc != 0 {
+            i += 1;
+        }
+        i = i - l * 8;
+        i / 8
+    }
+
+    fn deconcat<'a>(&self, text: &'a str) -> Vec<&'a str> {
+        let mut acc = vec![];
+        let mut prev_i = 0;
+        let mut met = false;
+        for (i, c) in text.chars().enumerate() {
+            if met == false && c == self.padding_char {
+                met = true;
+            }
+            if met == true && c != self.padding_char {
+                acc.push(text.get(prev_i..i).unwrap());
+                met = false;
+                prev_i = i;
+            }
+        }
+        acc.push(text.get(prev_i..).unwrap());
+        acc
+    }
+
+    fn _decode(&self, text: &str) -> Result<Vec<u8>, String> {
+        let unpadded = text.trim_end_matches(self.padding_char);
         let mut err = Ok(vec![0]);
-        let mut idx = 0;
-        let it = text
-            .trim_end_matches(self.padding_char)
+        let it = unpadded
             .chars()
-            .map(|x| self.char_space.char_to_idx(x))
-            .scan(0, |_, x| match x {
-                Ok(o) => {
-                    idx += 1;
-                    Some(o)
-                }
+            .enumerate()
+            .map(|(i, x)| (i, self.char_space.char_to_idx(x)))
+            .scan(0, |_, (i, x)| match x {
+                Ok(o) => Some(o),
                 Err(e) => {
-                    err = Err(format!("At idx {}: {}", idx, e));
+                    err = Err(format!("At chrar #{}: {}", i, e));
                     None
                 }
             });
-        let it = RepackIterator::new(it, self.bitcount(), 8, true)
+        let mut arr = RepackIterator::new(it, self.bitcount(), 8, true)
             .map(|x| x as u8)
-            .collect();
+            .collect::<Vec<u8>>();
         err?;
-        Ok(it)
+
+        if self.bitcount() > 8 {
+            let drop_count = text.chars().count() - unpadded.chars().count();
+            arr.resize(arr.len() - drop_count, 0);
+        }
+        Ok(arr)
     }
 }
 
@@ -185,18 +227,18 @@ impl Encoding {
 mod tests {
     use super::Encoding;
 
-    static COUNTS : &[(&str, u8)] = &[
+    static COUNTS: &[(&str, u8)] = &[
         ("base64", 6),
         ("katakana", 6),
         ("hiragana", 6),
-        ("kanji", 16)
+        ("kanji", 16),
     ];
 
     #[test]
     fn test_bitcounts() {
         for (k, v) in COUNTS {
             let enc = k.parse::<&Encoding>().unwrap();
-            assert_eq!(enc.bitcount(), *v);
+            assert_eq!(*v, enc.bitcount());
         }
     }
 }

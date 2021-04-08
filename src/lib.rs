@@ -1,7 +1,7 @@
 use wasm_bindgen::prelude::*;
 
-mod repack;
 mod encoding;
+mod repack;
 use encoding::Encoding;
 
 #[wasm_bindgen]
@@ -70,7 +70,7 @@ mod tests {
             .output()
             .expect("failed to curl");
         let text = String::from_utf8(output.stdout).unwrap();
-        assert!(text.len() > 700);
+        assert!(text.len() > 700); // ballpark check
 
         text.split("\n")
             .filter(|x| !(x.starts_with("#") || x.is_empty()))
