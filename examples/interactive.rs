@@ -21,7 +21,7 @@ macro_rules! pop_arg {
 
 fn usage() {
     eprint!(
-"Usage:
+        "Usage:
 exit
 enc <encoding> <text>
 dec <encoding> <text>
@@ -33,20 +33,25 @@ fn main() {
     loop {
         eprint!(">>> ");
         let line = read_line();
-        let line = &line[0..line.len()-1]; // remove \n
+        let line = &line[0..line.len() - 1]; // remove \n
 
         let (arg, rest) = pop_arg!(line);
         let encode = match arg {
-            "exit" => { break; },
+            "exit" => {
+                break;
+            }
             "enc" => true,
             "dec" => false,
-            _ => { usage(); continue; },
+            _ => {
+                usage();
+                continue;
+            }
         };
 
         let (arg, rest) = pop_arg!(rest);
         // if any error is raised, it will crash, because it constructs a JsValue...
         let res = if encode {
-            basehanja::encode(rest, arg)
+            basehanja::encode_utf8(rest, arg)
         } else {
             basehanja::decode_utf8(rest, arg)
         };

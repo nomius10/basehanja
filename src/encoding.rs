@@ -1,24 +1,5 @@
 use crate::repack::{uVar, RepackIterator};
 
-pub struct Encoding {
-    pub name: &'static str,
-    pub long_name: &'static str,
-    char_space: CharSpace,
-    padding_char: PadType,
-}
-
-enum CharSpace {
-    Concrete(&'static str),
-    Intervals(&'static [(char, char)]),
-}
-use CharSpace::*;
-
-enum PadType {
-    BlockPad(char),
-    DropPad(char),
-}
-use PadType::*;
-
 static ENCODINGS: &[Encoding] = &[
     Encoding {
         name: "base64",
@@ -30,7 +11,7 @@ static ENCODINGS: &[Encoding] = &[
             ('+', '+'),
             ('/', '/'),
         ]),
-        padding_char: BlockPad('='),
+        pad_char: BlockPad('='),
     },
     Encoding {
         name: "hiragana",
@@ -40,7 +21,7 @@ static ENCODINGS: &[Encoding] = &[
             "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみ\
             むめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶ",
         ),
-        padding_char: BlockPad('ゐ'),
+        pad_char: BlockPad('ゐ'),
     },
     Encoding {
         name: "katakana",
@@ -49,7 +30,7 @@ static ENCODINGS: &[Encoding] = &[
             "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミ\
             ムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビブ",
         ),
-        padding_char: BlockPad('ヰ'),
+        pad_char: BlockPad('ヰ'),
     },
     Encoding {
         name: "kanji",
@@ -59,19 +40,41 @@ static ENCODINGS: &[Encoding] = &[
             ('\u{03400}', '\u{03DB5}'), //  6_592 chars; https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_Extension_A
             ('\u{20000}', '\u{2a6df}'), // 42_720 chars; https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_Extension_B
         ]),
-        padding_char: DropPad('々'),
+        pad_char: DropPad('々'),
     },
     Encoding {
-        name: "hangul13",
+        name: "hangul",
         long_name: "Hangul (한글) (13-bit)",
         char_space: CharSpace::Intervals(&[
             ('\u{AC00}', '\u{D74f}'), // 11_088 chars
         ]),
-        padding_char: DropPad('흐'),
+        pad_char: DropPad('흐'),
     },
 ];
 
-// taboo
+pub struct Encoding {
+    pub name: &'static str,
+    pub long_name: &'static str,
+    char_space: CharSpace,
+    pad_char: PadType,
+}
+
+enum CharSpace {
+    Concrete(&'static str),
+    Intervals(&'static [(char, char)]),
+}
+
+enum PadType {
+    /// "padding" is the same as in base64
+    BlockPad(char),
+    /// "padding" signifies how many chars to drop when decoding
+    DropPad(char),
+}
+
+use CharSpace::*;
+use PadType::*;
+
+// taboo; I'm doing it just because I can
 impl std::ops::Deref for PadType {
     type Target = char;
     fn deref(&self) -> &Self::Target {
@@ -138,22 +141,10 @@ impl CharSpace {
         }
     }
 
-    fn size(&self) -> usize {
+    fn num_chars(&self) -> usize {
         match self {
             Concrete(s) => s.chars().count(),
             Intervals(arr) => arr.iter().map(|(a, b)| cp_len!(*a, *b)).sum(),
-        }
-    }
-
-    pub fn bitcount(&self) -> u8 {
-        let l = self.size();
-        let mut i = 0;
-        // 00011010
-        loop {
-            if 1 << i + 1 > l {
-                break i;
-            }
-            i += 1;
         }
     }
 }
@@ -171,10 +162,6 @@ impl std::str::FromStr for &Encoding {
 }
 
 impl Encoding {
-    pub fn bitcount(&self) -> u8 {
-        self.char_space.bitcount()
-    }
-
     pub fn encode(&self, bytes: &[u8]) -> String {
         let it = bytes.iter().map(|&x| x as uVar);
         let it = RepackIterator::new(it, 8, self.bitcount());
@@ -182,63 +169,66 @@ impl Encoding {
             .map(|x| self.char_space.idx_to_char(x))
             .collect::<String>();
         // Append padding chars
-        let pad_len = self.get_pad_len(bytes.len());
-        s += &self.padding_char.to_string().repeat(pad_len);
+        let pad_len = self.get_pad_len(bytes);
+        s += &self.pad_char.to_string().repeat(pad_len);
         s
     }
 
     pub fn decode(&self, text: &str) -> Result<Vec<u8>, String> {
         let mut acc = vec![];
         for txt in self.deconcat(text) {
-            acc.append(&mut self._decode(txt)?);
+            acc.append(&mut self.decode_single(txt)?);
         }
         Ok(acc)
     }
 
-    fn lcm(a: usize, b: usize) -> usize {
-        let mut crt = std::cmp::max(a, b);
+    pub fn bitcount(&self) -> u8 {
+        let l = self.char_space.num_chars();
+        let mut i = 0;
+        // 00011010
         loop {
-            if crt % a == 0 && crt % b == 0 {
-                break crt;
+            if 1 << i + 1 > l {
+                break i;
             }
-            crt += 1;
+            i += 1;
         }
     }
 
-    fn get_pad_len(&self, l: usize) -> usize {
-        let bc = self.bitcount() as usize;
-        if l == 0 {
+    /// How many padding chars should be added to the encoding?
+    fn get_pad_len(&self, arr: &[u8]) -> usize {
+        let ebc = self.bitcount() as usize;
+        let nbytes = arr.len();
+        if nbytes == 0 {
             return 0;
         }
-        match self.padding_char {
-            // "padding" is the same as in base64
+        match self.pad_char {
             BlockPad(_) => {
-                let block_len = Self::lcm(bc, 8);
-                let last_bits = (l * 8) % block_len;
+                let block_len = lcm(ebc, 8);
+                let last_bits = (nbytes * 8) % block_len;
                 if last_bits == 0 {
                     return 0;
                 }
-                (block_len - last_bits) / bc
+                (block_len - last_bits) / ebc
             }
-            // "padding" signifies how many chars to drop when decoding
             DropPad(_) => {
-                let inp_bitlen = l * 8;
-                let out_bitlen = div_ceil!(inp_bitlen, bc) * bc;
+                let inp_bitlen = nbytes * 8;
+                let out_bitlen = div_ceil!(inp_bitlen, ebc) * ebc;
                 let extra = out_bitlen - inp_bitlen;
                 div_ceil!(extra, 8)
             }
         }
     }
 
+    /// Separate a concatenated encoding into its individual parts
     fn deconcat<'a>(&self, text: &'a str) -> Vec<&'a str> {
         let mut acc = vec![];
         let mut prev_i = 0;
         let mut met = false;
         for (i, c) in text.char_indices() {
-            if met == false && c == *self.padding_char {
+            if met == false && c == *self.pad_char {
                 met = true;
             }
-            if met == true && c != *self.padding_char {
+            if met == true && c != *self.pad_char {
                 acc.push(text.get(prev_i..i).unwrap());
                 met = false;
                 prev_i = i;
@@ -248,8 +238,11 @@ impl Encoding {
         acc
     }
 
-    fn _decode(&self, text: &str) -> Result<Vec<u8>, String> {
-        let unpadded = text.trim_end_matches(*self.padding_char);
+    /// Decode a non-concatenated string
+    fn decode_single(&self, text: &str) -> Result<Vec<u8>, String> {
+        let unpadded = text.trim_end_matches(*self.pad_char);
+
+        // decode to array of bytes
         let mut err = Ok(vec![0]);
         let it = unpadded
             .chars()
@@ -258,7 +251,7 @@ impl Encoding {
             .scan(0, |_, (i, x)| match x {
                 Ok(o) => Some(o),
                 Err(e) => {
-                    err = Err(format!("At chrar #{}: {}", i, e));
+                    err = Err(format!("Error: At char #{}: {}", i, e));
                     None
                 }
             });
@@ -267,16 +260,28 @@ impl Encoding {
             .collect::<Vec<u8>>();
         err?;
 
-        let drop_count = match self.padding_char {
+        // drop extra bytes resulted from the decoding, if any
+        let drop_count = match self.pad_char {
             BlockPad(_) => {
-                let block_char_size =
-                    Self::lcm(8, self.bitcount() as usize) / self.bitcount() as usize;
+                let block_char_size = lcm(8, self.bitcount() as usize) / self.bitcount() as usize;
                 std::cmp::min(1, unpadded.chars().count() % block_char_size)
             }
             DropPad(_) => text.chars().count() - unpadded.chars().count(),
         };
         arr.resize(arr.len() - drop_count, 0);
+
         Ok(arr)
+    }
+}
+
+/// smallest common multiple
+fn lcm(a: usize, b: usize) -> usize {
+    let mut crt = std::cmp::max(a, b);
+    loop {
+        if crt % a == 0 && crt % b == 0 {
+            break crt;
+        }
+        crt += 1;
     }
 }
 
@@ -288,16 +293,16 @@ pub fn get_encodings<'a>() -> &'static [Encoding] {
 mod tests {
     use super::Encoding;
 
-    static COUNTS: &[(&str, u8)] = &[
-        ("base64", 6),
-        ("katakana", 6),
-        ("hiragana", 6),
-        ("kanji", 16),
-    ];
-
     #[test]
     fn test_bitcounts() {
-        for (k, v) in COUNTS {
+        let counts = &[
+            ("base64", 6),
+            ("katakana", 6),
+            ("hiragana", 6),
+            ("kanji", 16),
+        ];
+
+        for (k, v) in counts {
             let enc = k.parse::<&Encoding>().unwrap();
             assert_eq!(*v, enc.bitcount());
         }
