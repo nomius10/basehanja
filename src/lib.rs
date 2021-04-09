@@ -11,6 +11,7 @@ pub struct EncodingDescription {
     description: String,
 }
 
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
 #[wasm_bindgen]
 pub fn get_encodings() -> Box<[JsValue]> {
     encoding::get_encodings()
@@ -24,6 +25,14 @@ pub fn get_encodings() -> Box<[JsValue]> {
         .into_boxed_slice()
 }
 
+#[cfg(not(all(target_arch = "wasm32", not(target_os = "emscripten"))))]
+pub fn get_encodings() -> Vec<&'static str> {
+    encoding::get_encodings()
+        .iter()
+        .map(|x| x.name)
+        .collect::<Vec<&str>>()
+}
+
 #[wasm_bindgen(catch)]
 pub fn decode(text: &str, charset: &str) -> Result<Box<[u8]>, JsValue> {
     let charset = charset.parse()?;
@@ -34,7 +43,7 @@ pub fn decode(text: &str, charset: &str) -> Result<Box<[u8]>, JsValue> {
 pub fn decode_utf8(text: &str, charset: &str) -> Result<String, JsValue> {
     let charset = charset.parse()?;
     let dec = _decode(text, charset)?;
-    String::from_utf8(dec).or(Err(JsValue::from_str("Invalid UTF-8 encoding")))
+    String::from_utf8(dec).or_else(|_| Err(JsValue::from_str("Invalid UTF-8 encoding")))
 }
 
 #[wasm_bindgen(catch)]

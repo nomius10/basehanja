@@ -3,14 +3,21 @@ use crate::repack::{uVar, RepackIterator};
 pub struct Encoding {
     pub name: &'static str,
     pub long_name: &'static str,
-    pub padding_char: char,
     char_space: CharSpace,
+    padding_char: PadType,
 }
 
 enum CharSpace {
     Concrete(&'static str),
     Intervals(&'static [(char, char)]),
 }
+use CharSpace::*;
+
+enum PadType {
+    BlockPad(char),
+    DropPad(char),
+}
+use PadType::*;
 
 static ENCODINGS: &[Encoding] = &[
     Encoding {
@@ -23,7 +30,7 @@ static ENCODINGS: &[Encoding] = &[
             ('+', '+'),
             ('/', '/'),
         ]),
-        padding_char: '=',
+        padding_char: BlockPad('='),
     },
     Encoding {
         name: "hiragana",
@@ -33,7 +40,7 @@ static ENCODINGS: &[Encoding] = &[
             "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみ\
             むめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶ",
         ),
-        padding_char: 'ゐ',
+        padding_char: BlockPad('ゐ'),
     },
     Encoding {
         name: "katakana",
@@ -42,7 +49,7 @@ static ENCODINGS: &[Encoding] = &[
             "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミ\
             ムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビブ",
         ),
-        padding_char: 'ヰ',
+        padding_char: BlockPad('ヰ'),
     },
     Encoding {
         name: "kanji",
@@ -52,9 +59,28 @@ static ENCODINGS: &[Encoding] = &[
             ('\u{03400}', '\u{03DB5}'), //  6_592 chars; https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_Extension_A
             ('\u{20000}', '\u{2a6df}'), // 42_720 chars; https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_Extension_B
         ]),
-        padding_char: '々',
+        padding_char: DropPad('々'),
+    },
+    Encoding {
+        name: "hangul13",
+        long_name: "Hangul (한글) (13-bit)",
+        char_space: CharSpace::Intervals(&[
+            ('\u{AC00}', '\u{D74f}'), // 11_088 chars
+        ]),
+        padding_char: DropPad('흐'),
     },
 ];
+
+// taboo
+impl std::ops::Deref for PadType {
+    type Target = char;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::BlockPad(c) => c,
+            Self::DropPad(c) => c,
+        }
+    }
+}
 
 macro_rules! cp_len {
     ($a:expr, $b:expr) => {
@@ -62,7 +88,16 @@ macro_rules! cp_len {
     };
 }
 
-use CharSpace::*;
+macro_rules! div_ceil {
+    ($div:expr, $by:expr) => {{
+        let mut a = $div;
+        while a % $by != 0 {
+            a += 1;
+        }
+        a / $by
+    }};
+}
+
 impl CharSpace {
     fn idx_to_char(&self, u: uVar) -> char {
         match self {
@@ -123,10 +158,6 @@ impl CharSpace {
     }
 }
 
-pub fn get_encodings<'a>() -> &'static [Encoding] {
-    ENCODINGS
-}
-
 impl std::str::FromStr for &Encoding {
     type Err = String;
 
@@ -146,7 +177,7 @@ impl Encoding {
 
     pub fn encode(&self, bytes: &[u8]) -> String {
         let it = bytes.iter().map(|&x| x as uVar);
-        let it = RepackIterator::new(it, 8, self.bitcount(), false);
+        let it = RepackIterator::new(it, 8, self.bitcount());
         let mut s = it
             .map(|x| self.char_space.idx_to_char(x))
             .collect::<String>();
@@ -164,35 +195,39 @@ impl Encoding {
         Ok(acc)
     }
 
-    fn gcd(a: usize, b: usize) -> usize {
-        let mut x = std::cmp::max(a, b);
-        let mut y = std::cmp::min(a, b);
+    fn lcm(a: usize, b: usize) -> usize {
+        let mut crt = std::cmp::max(a, b);
         loop {
-            let r = x % y;
-            if r == 0 {
-                return y;
+            if crt % a == 0 && crt % b == 0 {
+                break crt;
             }
-            x = y;
-            y = r;
+            crt += 1;
         }
     }
 
-    // for bitcounts larger than 8, the padding will determine the num of chars to drop
     fn get_pad_len(&self, l: usize) -> usize {
         let bc = self.bitcount() as usize;
-        if bc <= 8 {
-            if l == 0 {
-                return 0;
+        if l == 0 {
+            return 0;
+        }
+        match self.padding_char {
+            // "padding" is the same as in base64
+            BlockPad(_) => {
+                let block_len = Self::lcm(bc, 8);
+                let last_bits = (l * 8) % block_len;
+                if last_bits == 0 {
+                    return 0;
+                }
+                (block_len - last_bits) / bc
             }
-            let gcd = Self::gcd(bc, 8);
-            return gcd - (l % gcd);
+            // "padding" signifies how many chars to drop when decoding
+            DropPad(_) => {
+                let inp_bitlen = l * 8;
+                let out_bitlen = div_ceil!(inp_bitlen, bc) * bc;
+                let extra = out_bitlen - inp_bitlen;
+                div_ceil!(extra, 8)
+            }
         }
-        let mut i = l * 8;
-        while i % bc != 0 {
-            i += 1;
-        }
-        i = i - l * 8;
-        i / 8
     }
 
     fn deconcat<'a>(&self, text: &'a str) -> Vec<&'a str> {
@@ -200,10 +235,10 @@ impl Encoding {
         let mut prev_i = 0;
         let mut met = false;
         for (i, c) in text.char_indices() {
-            if met == false && c == self.padding_char {
+            if met == false && c == *self.padding_char {
                 met = true;
             }
-            if met == true && c != self.padding_char {
+            if met == true && c != *self.padding_char {
                 acc.push(text.get(prev_i..i).unwrap());
                 met = false;
                 prev_i = i;
@@ -214,7 +249,7 @@ impl Encoding {
     }
 
     fn _decode(&self, text: &str) -> Result<Vec<u8>, String> {
-        let unpadded = text.trim_end_matches(self.padding_char);
+        let unpadded = text.trim_end_matches(*self.padding_char);
         let mut err = Ok(vec![0]);
         let it = unpadded
             .chars()
@@ -227,17 +262,26 @@ impl Encoding {
                     None
                 }
             });
-        let mut arr = RepackIterator::new(it, self.bitcount(), 8, true)
+        let mut arr = RepackIterator::new(it, self.bitcount(), 8)
             .map(|x| x as u8)
             .collect::<Vec<u8>>();
         err?;
 
-        if self.bitcount() > 8 {
-            let drop_count = text.chars().count() - unpadded.chars().count();
-            arr.resize(arr.len() - drop_count, 0);
-        }
+        let drop_count = match self.padding_char {
+            BlockPad(_) => {
+                let block_char_size =
+                    Self::lcm(8, self.bitcount() as usize) / self.bitcount() as usize;
+                std::cmp::min(1, unpadded.chars().count() % block_char_size)
+            }
+            DropPad(_) => text.chars().count() - unpadded.chars().count(),
+        };
+        arr.resize(arr.len() - drop_count, 0);
         Ok(arr)
     }
+}
+
+pub fn get_encodings<'a>() -> &'static [Encoding] {
+    ENCODINGS
 }
 
 #[cfg(test)]
@@ -256,6 +300,45 @@ mod tests {
         for (k, v) in COUNTS {
             let enc = k.parse::<&Encoding>().unwrap();
             assert_eq!(*v, enc.bitcount());
+        }
+    }
+
+    #[test]
+    fn test_block_pad() {
+        let pairs = &[
+            ("a" /*        */, "YQ=="),
+            ("aa" /*       */, "YWE="),
+            ("aaa" /*      */, "YWFh"),
+            ("aaaa" /*     */, "YWFhYQ=="),
+            ("aaaaa" /*    */, "YWFhYWE="),
+            ("aaaaaa" /*   */, "YWFhYWFh"),
+            ("aaaaaaa" /*  */, "YWFhYWFhYQ=="),
+            ("aaaaaaaa" /* */, "YWFhYWFhYWE="),
+            ("aaaaaaaaa" /**/, "YWFhYWFhYWFh"),
+        ];
+        let codec = "base64".parse::<&Encoding>().unwrap();
+        for (dec, enc) in pairs {
+            assert_eq!(*enc, codec.encode(dec.as_bytes()), "Encoding mismatch");
+            let res = codec.decode(enc).unwrap();
+            assert_eq!(dec.as_bytes(), res, "Decoding mismatch");
+        }
+    }
+
+    #[test]
+    fn test_drop_pad() {
+        let pairs = &[
+            ("a" /*     */, "𠕊々"),
+            ("aa" /*    */, "𠖫"),
+            ("aaa" /*   */, "𠖫𠕊々"),
+            ("aaaa" /*  */, "𠖫𠖫"),
+            ("aaaaa" /* */, "𠖫𠖫𠕊々"),
+            ("aaaaaa" /**/, "𠖫𠖫𠖫"),
+        ];
+        let codec = "kanji".parse::<&Encoding>().unwrap();
+        for (dec, enc) in pairs {
+            assert_eq!(*enc, codec.encode(dec.as_bytes()), "Encoding mismatch");
+            let res = codec.decode(enc).unwrap();
+            assert_eq!(dec.as_bytes(), res, "Decoding mismatch");
         }
     }
 }

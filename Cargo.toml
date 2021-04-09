@@ -4,6 +4,9 @@ version = "0.1.0"
 authors = ["Neculai Balaban <neculai.balaban@outlook.com>"]
 edition = "2018"
 publish = false
+license-file = "LICENSE"
+description = "Impractical binary-to-text encoding using various UTF-8 charsets"
+repository = "https://github.com/nomius10/basehanja"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -11,9 +14,12 @@ publish = false
 lto = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["lib", "cdylib"] # cdylib is for wasm, lib is for the examples
 
 [dependencies]
 lazy_static = "1.4.0"
 serde = { version = "1.0", features = ["derive"] }
 wasm-bindgen = { version = "0.2.73", features = ["serde-serialize"] }
+
+[dev-dependencies]
+clap = "2.33.3"

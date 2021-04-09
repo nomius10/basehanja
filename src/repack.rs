@@ -6,19 +6,16 @@ pub type uVar = u32;
 ///
 /// E.g: from u8->u6 (or vice versa)
 ///
-///     11111111 00000000 11111111
-///
-///     111111 110000 000011 111111
+/// `11111100 00001111` -> `111111 000000 111100`
 pub struct RepackIterator<T: Iterator> {
     iband: std::iter::Peekable<T>,
     cbits: u8,
     isize: u8,
     osize: u8,
-    discard: bool,
 }
 
 impl<T: Iterator<Item = uVar>> RepackIterator<T> {
-    pub fn new<F>(iband: F, isize: u8, osize: u8, discard: bool) -> RepackIterator<T>
+    pub fn new<F>(iband: F, isize: u8, osize: u8) -> RepackIterator<T>
     where
         F: IntoIterator<Item = uVar, IntoIter = T>,
     {
@@ -27,7 +24,6 @@ impl<T: Iterator<Item = uVar>> RepackIterator<T> {
             cbits: 0,
             isize: isize,
             osize: osize,
-            discard: discard,
         }
     }
 }
@@ -57,10 +53,7 @@ impl<T: Iterator<Item = uVar>> Iterator for RepackIterator<T> {
         // _____XXX XXXXXXXX XXXX____
         while aln < self.osize {
             if self.iband.peek().is_none() {
-                return match self.discard {
-                    true => None,
-                    false => Some(acc << (self.osize - aln)),
-                };
+                return Some(acc << (self.osize - aln));
             }
             let crt_n = *self.iband.peek().unwrap();
 
