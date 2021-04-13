@@ -1,56 +1,7 @@
 use crate::repack::{uVar, RepackIterator};
 
-static ENCODINGS: &[Encoding] = &[
-    Encoding {
-        name: "base64",
-        long_name: "Base64",
-        char_space: CharSpace::Intervals(&[
-            ('A', 'Z'),
-            ('a', 'z'),
-            ('0', '9'),
-            ('+', '+'),
-            ('/', '/'),
-        ]),
-        pad_char: BlockPad('='),
-    },
-    Encoding {
-        name: "hiragana",
-        long_name: "Hiragana (ひらがな)",
-        char_space: CharSpace::Concrete(
-            // ordering mostly follows https://www.youtube.com/watch?v=lrMkJAzbWQc
-            "あいうえおかきくけこさしすせそたちつてとなにぬねのはひふへほまみ\
-            むめもやゆよらりるれろわをんがぎぐげござじずぜぞだぢづでどばびぶ",
-        ),
-        pad_char: BlockPad('ゐ'),
-    },
-    Encoding {
-        name: "katakana",
-        long_name: "Katakana (かたかな)",
-        char_space: CharSpace::Concrete(
-            "アイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミ\
-            ムメモヤユヨラリルレロワヲンガギグゲゴザジズゼゾダヂヅデドバビブ",
-        ),
-        pad_char: BlockPad('ヰ'),
-    },
-    Encoding {
-        name: "kanji",
-        long_name: "Hanzi+Kanji+Hanja (漢字)",
-        char_space: CharSpace::Intervals(&[
-            ('\u{04e00}', '\u{09fff}'), // 20_992 chars; https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_(Unicode_block)
-            ('\u{03400}', '\u{03DB5}'), //  6_592 chars; https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_Extension_A
-            ('\u{20000}', '\u{2a6df}'), // 42_720 chars; https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_Extension_B
-        ]),
-        pad_char: DropPad('々'),
-    },
-    Encoding {
-        name: "hangul",
-        long_name: "Hangul (한글) (13-bit)",
-        char_space: CharSpace::Intervals(&[
-            ('\u{AC00}', '\u{D74f}'), // 11_088 chars
-        ]),
-        pad_char: DropPad('흐'),
-    },
-];
+mod config;
+use config::ENCODINGS;
 
 pub struct Encoding {
     pub name: &'static str,
@@ -74,7 +25,7 @@ enum PadType {
 use CharSpace::*;
 use PadType::*;
 
-// taboo; I'm doing it just because I can
+// taboo AFAIK; I'm doing it just because I can
 impl std::ops::Deref for PadType {
     type Target = char;
     fn deref(&self) -> &Self::Target {
@@ -297,9 +248,10 @@ mod tests {
     fn test_bitcounts() {
         let counts = &[
             ("base64", 6),
-            ("katakana", 6),
             ("hiragana", 6),
             ("kanji", 16),
+            ("binary", 1),
+            ("hex", 4),
         ];
 
         for (k, v) in counts {

@@ -52,7 +52,7 @@ pub fn get_encodings() -> Box<[JsValue]> {
         .into_boxed_slice()
 }
 
-/// PC side: Return a vector of names
+/// PC side: Return just a vector of names
 #[cfg(not(all(target_arch = "wasm32", not(target_os = "emscripten"))))]
 pub fn get_encodings() -> Vec<&'static str> {
     encoding::get_encodings()
